@@ -36,10 +36,10 @@ struct Args {
     category_threshold: f32,
 
     /// Skip photos that already have .analysis.json files
-    #[arg(long)]
+    #[arg(long, conflicts_with = "force")]
     skip_existing: bool,
 
-    /// Re-analyze even if .analysis.json exists
+    /// Re-analyze even if .analysis.json exists (overrides --skip-existing)
     #[arg(long)]
     force: bool,
 
@@ -90,7 +90,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    if args.skip_existing && !args.force {
+    if args.skip_existing {
         all_photos.retain(|p| {
             let stem = p.file_stem().map(|s| s.to_string_lossy()).unwrap_or_default();
             let json_path = p.with_file_name(format!("{stem}.analysis.json"));

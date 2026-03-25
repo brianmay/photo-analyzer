@@ -116,8 +116,8 @@ fn parse_detections(
             continue;
         }
         // Coordinates are in pixel space of the resized (DETECTION_SIZE x DETECTION_SIZE) image.
-        // Divide by DETECTION_SIZE to normalize to [0, 1].
-        let x1n = data[base] / DETECTION_SIZE as f32;
+    // Divide by DETECTION_SIZE to normalize to [0, 1].
+    let x1n = data[base] / DETECTION_SIZE as f32;
         let y1n = data[base + 1] / DETECTION_SIZE as f32;
         let x2n = data[base + 2] / DETECTION_SIZE as f32;
         let y2n = data[base + 3] / DETECTION_SIZE as f32;

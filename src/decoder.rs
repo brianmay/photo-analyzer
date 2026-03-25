@@ -19,8 +19,12 @@ pub fn decode_image(path: &Path) -> Result<DynamicImage> {
 }
 
 fn decode_cr3(path: &Path) -> Result<DynamicImage> {
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8: {}", path.display()))?;
+
     let output = Command::new("exiftool")
-        .args(["-b", "-PreviewImage", path.to_str().unwrap_or("")])
+        .args(["-b", "-PreviewImage", path_str])
         .output();
 
     if let Ok(output) = output {
@@ -33,7 +37,7 @@ fn decode_cr3(path: &Path) -> Result<DynamicImage> {
     }
 
     let output = Command::new("dcraw")
-        .args(["-e", "-c", path.to_str().unwrap_or("")])
+        .args(["-e", "-c", path_str])
         .output();
 
     if let Ok(output) = output {

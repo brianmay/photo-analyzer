@@ -1,5 +1,10 @@
 use image::DynamicImage;
 
+/// Target average saturation considered aesthetically pleasing (moderately saturated).
+const TARGET_SATURATION: f32 = 0.4;
+/// Controls how much score is lost per unit deviation from TARGET_SATURATION.
+const SATURATION_SENSITIVITY: f32 = 2.0;
+
 pub fn compute_aesthetic(img: &DynamicImage, sharpness: f32, exposure: f32, noise: f32) -> f32 {
     let rgb = img.to_rgb8();
     let (width, height) = rgb.dimensions();
@@ -31,7 +36,8 @@ pub fn compute_aesthetic(img: &DynamicImage, sharpness: f32, exposure: f32, nois
         0.0
     };
 
-    let color_score = (1.0 - (avg_saturation - 0.4).abs() * 2.0).clamp(0.0, 1.0);
+    let color_score =
+        (1.0 - (avg_saturation - TARGET_SATURATION).abs() * SATURATION_SENSITIVITY).clamp(0.0, 1.0);
 
     (color_score * 0.3 + sharpness * 0.3 + exposure * 0.25 + noise * 0.15)
         .clamp(0.0, 1.0)

@@ -11,13 +11,13 @@ use hf_hub::api::sync::Api;
 use image::DynamicImage;
 use tokenizers::Tokenizer;
 
-const MODEL_ID: &str = "Salesforce/blip-image-captioning-base";
+const MODEL_ID: &str = "Salesforce/blip-image-captioning-large";
 const IMAGE_SIZE: usize = 384;
 const SEP_TOKEN_ID: u32 = 102;
 const MAX_TOKENS: usize = 64;
 
 const IMAGENET_MEAN: [f32; 3] = [0.48145466, 0.4578275, 0.40821073];
-const IMAGENET_STD: [f32; 3] = [0.26862954, 0.26130258, 0.27577711];
+const IMAGENET_STD: [f32; 3] = [0.26862954, 0.261_302_6, 0.275_777_1];
 
 pub struct CaptioningModel {
     model: blip::BlipForConditionalGeneration,

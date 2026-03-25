@@ -12,6 +12,7 @@ pub fn compute_sharpness(img: &DynamicImage) -> f32 {
         return 0.0;
     }
 
+    // 3×3 Laplacian kernel for edge detection: [[0, 1, 0], [1, -4, 1], [0, 1, 0]]
     let kernel: [f32; 9] = [0.0, 1.0, 0.0, 1.0, -4.0, 1.0, 0.0, 1.0, 0.0];
 
     let mut values = Vec::with_capacity(((width - 2) * (height - 2)) as usize);

@@ -17,7 +17,7 @@ const MODEL_ID: &str = "openai/clip-vit-base-patch32";
 const IMAGE_SIZE: usize = 224;
 
 const IMAGENET_MEAN: [f32; 3] = [0.48145466, 0.4578275, 0.40821073];
-const IMAGENET_STD: [f32; 3] = [0.26862954, 0.26130258, 0.27577711];
+const IMAGENET_STD: [f32; 3] = [0.26862954, 0.261_302_6, 0.275_777_1];
 
 /// Default photo category labels used for zero-shot classification.
 const CATEGORIES: &[&str] = &[

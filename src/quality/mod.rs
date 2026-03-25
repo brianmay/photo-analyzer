@@ -7,6 +7,13 @@ pub mod exposure;
 pub mod noise;
 pub mod sharpness;
 
+// Composite quality score weights (must sum to 1.0).
+const SHARPNESS_WEIGHT: f32 = 0.25;
+const EXPOSURE_WEIGHT: f32 = 0.15;
+const NOISE_WEIGHT: f32 = 0.15;
+const COMPOSITION_WEIGHT: f32 = 0.20;
+const AESTHETIC_WEIGHT: f32 = 0.25;
+
 pub fn compute_quality(img: &DynamicImage, faces: &[BoundingBox]) -> QualityScore {
 
     let sharpness = sharpness::compute_sharpness(img);
@@ -15,7 +22,11 @@ pub fn compute_quality(img: &DynamicImage, faces: &[BoundingBox]) -> QualityScor
     let composition = composition::compute_composition(faces);
     let aesthetic = aesthetic::compute_aesthetic(img, sharpness, exposure, noise);
 
-    let overall = sharpness * 0.25 + exposure * 0.15 + noise * 0.15 + composition * 0.20 + aesthetic * 0.25;
+    let overall = sharpness * SHARPNESS_WEIGHT
+        + exposure * EXPOSURE_WEIGHT
+        + noise * NOISE_WEIGHT
+        + composition * COMPOSITION_WEIGHT
+        + aesthetic * AESTHETIC_WEIGHT;
 
     QualityScore {
         overall: overall.clamp(0.0, 1.0),

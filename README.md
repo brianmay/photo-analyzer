@@ -104,7 +104,7 @@ On first run the following models are downloaded from HuggingFace Hub and cached
 
 | Model | Usage | ~Size |
 |-------|-------|-------|
-| `Salesforce/blip-image-captioning-base` | Caption generation | ~900 MB |
+| `Salesforce/blip-image-captioning-large` | Caption generation | ~1.9 GB |
 | `openai/clip-vit-base-patch32` | Zero-shot categorization | ~600 MB |
 | `Xenova/face-detection` | Face bounding boxes | ~6 MB |
 
