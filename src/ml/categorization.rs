@@ -9,7 +9,9 @@ use candle_nn::VarBuilder;
 use candle_transformers::models::clip;
 use hf_hub::api::sync::Api;
 use image::DynamicImage;
-use tokenizers::Tokenizer;
+use tokenizers::{AddedToken, Tokenizer};
+use tokenizers::models::bpe::BPE;
+use tokenizers::processors::template::TemplateProcessing;
 
 use crate::models::Category;
 
@@ -60,9 +62,51 @@ impl CategorizationModel {
                 (path, false)
             }
         };
-        let tokenizer_file = repo
-            .get("tokenizer.json")
-            .context("Failed to download CLIP tokenizer")?;
+        // Build the CLIP BPE tokenizer from raw vocab/merges files.
+        // Using tokenizer.json directly fails because hf-hub can't resolve
+        // relative URLs embedded in that file's metadata for this repo.
+        let vocab_file = repo
+            .get("vocab.json")
+            .context("Failed to download CLIP vocabulary")?;
+        let merges_file = repo
+            .get("merges.txt")
+            .context("Failed to download CLIP merge rules")?;
+
+        let bpe_model = BPE::from_file(
+            vocab_file.to_str().context("CLIP vocab path is not valid UTF-8")?,
+            merges_file.to_str().context("CLIP merges path is not valid UTF-8")?,
+        )
+        .unk_token("<|endoftext|>".to_string())
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build CLIP BPE model: {}", e))?;
+
+        let mut tokenizer = Tokenizer::new(bpe_model);
+
+        // Register CLIP's special tokens so the tokenizer recognises them.
+        tokenizer.add_special_tokens(&[
+            AddedToken::from("<|startoftext|>".to_string(), true),
+            AddedToken::from("<|endoftext|>".to_string(), true),
+        ]);
+
+        // Wrap every sequence with BOS / EOS, matching CLIP's text-encoder contract.
+        let bos_id = tokenizer
+            .token_to_id("<|startoftext|>")
+            .context("BOS token not found in CLIP vocabulary")?;
+        let eos_id = tokenizer
+            .token_to_id("<|endoftext|>")
+            .context("EOS token not found in CLIP vocabulary")?;
+
+        let post_processor = TemplateProcessing::builder()
+            .try_single("<|startoftext|> $A <|endoftext|>")
+            .map_err(|e| anyhow::anyhow!("CLIP template error: {}", e))?
+            .special_tokens(vec![
+                ("<|startoftext|>", bos_id),
+                ("<|endoftext|>", eos_id),
+            ])
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build CLIP post-processor: {}", e))?;
+
+        tokenizer.with_post_processor(Some(post_processor));
 
         let vb = if use_safetensors {
             unsafe {
@@ -77,9 +121,6 @@ impl CategorizationModel {
         let config = clip::ClipConfig::vit_base_patch32();
         let model = clip::ClipModel::new(vb, &config)
             .map_err(|e| anyhow::anyhow!("Failed to build CLIP model: {}", e))?;
-
-        let tokenizer =
-            Tokenizer::from_file(tokenizer_file).map_err(|e| anyhow::anyhow!("{}", e))?;
 
         Ok(Self {
             model,
