@@ -1,26 +1,47 @@
-//! ONNX-based face detection using ORT with Non-Maximum Suppression.
+//! ONNX-based face detection using Ultra-Light-Fast-Generic-Face-Detector.
 //!
-//! Downloads the `deepghs/face_detect_onnx` ONNX model from HuggingFace on
-//! first use. If the model cannot be downloaded or loaded, face detection is
-//! disabled gracefully — the rest of the pipeline (captioning, categorisation)
-//! continues to work normally.
+//! Downloads `version-RFB-640.onnx` from GitHub on first use (MIT licence,
+//! <https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB>)
+//! and caches it in the OS temporary directory.  If the model cannot be
+//! downloaded or loaded, face detection is disabled gracefully — the rest of
+//! the pipeline (captioning, categorisation) continues to work normally.
 //!
-//! Expected output format: [batch, num_detections, 6] where the last
-//! dimension is [x1, y1, x2, y2, confidence, class_id].
+//! Model I/O contract
+//! ------------------
+//! Input  : `input`  — shape `[1, 3, 480, 640]` (NCHW), pixel values in
+//!                      `[-1, 1]` via `(v − 127) / 128`.
+//! Output 0: `scores` — shape `[1, N, 2]` — `[background_prob, face_prob]`
+//!                      for each of the N anchor boxes.
+//! Output 1: `boxes`  — shape `[1, N, 4]` — `[x1, y1, x2, y2]` normalised
+//!                      to `[0, 1]` relative to the 640 × 480 input frame.
+
+use std::io::Read;
 
 use anyhow::{Context, Result};
-use hf_hub::api::sync::Api;
 use image::DynamicImage;
 use ndarray::Array4;
 use ort::{session::Session, value::TensorRef};
 
 use crate::models::{BoundingBox, Person};
 
-const MODEL_ID: &str = "deepghs/face_detect_onnx";
-const MODEL_FILE: &str = "face_detect.onnx";
-const DETECTION_SIZE: u32 = 640;
-const CONFIDENCE_THRESHOLD: f32 = 0.5;
+/// Public GitHub raw URL for version-RFB-640.onnx (MIT licence).
+const MODEL_URL: &str = concat!(
+    "https://raw.githubusercontent.com/",
+    "Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB/",
+    "master/models/onnx/version-RFB-640.onnx"
+);
+const CACHE_FILENAME: &str = "photo_analyzer_ultraface_rfb640.onnx";
+
+/// Input width/height expected by this model variant.
+const INPUT_W: u32 = 640;
+const INPUT_H: u32 = 480;
+
+/// Minimum face-class probability to keep a detection.
+const CONFIDENCE_THRESHOLD: f32 = 0.7;
+/// IoU threshold for non-maximum suppression.
 const IOU_THRESHOLD: f32 = 0.4;
+
+// ---------------------------------------------------------------------------
 
 pub struct FaceDetector {
     session: Option<Session>,
@@ -29,13 +50,13 @@ pub struct FaceDetector {
 impl FaceDetector {
     /// Attempt to download and initialise the face-detection model.
     ///
-    /// If the model is unavailable (network error, authentication required,
-    /// etc.) a warning is logged and the detector is returned in a disabled
-    /// state.  All subsequent calls to [`detect_faces`] will return an empty
-    /// list in that case.
+    /// On any failure a `WARN` is logged and the detector is returned in a
+    /// disabled state; [`detect_faces`] will then return an empty list.
     pub fn load() -> Result<Self> {
         match Self::try_load() {
-            Ok(session) => Ok(Self { session: Some(session) }),
+            Ok(session) => Ok(Self {
+                session: Some(session),
+            }),
             Err(e) => {
                 tracing::warn!(
                     "Face detection model could not be loaded — face detection \
@@ -47,19 +68,51 @@ impl FaceDetector {
     }
 
     fn try_load() -> Result<Session> {
-        let api = Api::new().context("Failed to create HuggingFace API client")?;
-        let repo = api.model(MODEL_ID.to_string());
+        let cache_path = std::env::temp_dir().join(CACHE_FILENAME);
+        if !cache_path.exists() {
+            Self::download_model(&cache_path)?;
+        }
 
-        let model_path = repo
-            .get(MODEL_FILE)
-            .context("Failed to download face detection ONNX model")?;
-
-        let session = Session::builder()
+        Session::builder()
             .context("Failed to create ORT session builder")?
-            .commit_from_file(model_path)
-            .context("Failed to load ONNX face detection model")?;
+            .commit_from_file(&cache_path)
+            .context("Failed to load ONNX face detection model")
+    }
 
-        Ok(session)
+    fn download_model(dest: &std::path::Path) -> Result<()> {
+        tracing::info!(
+            "Downloading face detection model (Ultra-Light-Fast-Generic-Face-Detector) …"
+        );
+
+        let response = ureq::get(MODEL_URL)
+            .call()
+            .map_err(|e| anyhow::anyhow!("HTTP request for face detection model failed: {e}"))?;
+
+        let status = response.status();
+        anyhow::ensure!(
+            status == 200,
+            "Unexpected HTTP status {} while downloading face detection model from {}",
+            status,
+            MODEL_URL
+        );
+
+        let mut bytes = Vec::new();
+        response
+            .into_reader()
+            .read_to_end(&mut bytes)
+            .context("Failed to read face detection model response body")?;
+
+        // Write to a temp file first, then rename atomically to avoid leaving
+        // a partially-written file if the process is interrupted or two
+        // instances run concurrently.
+        let tmp_path = dest.with_extension("tmp");
+        std::fs::write(&tmp_path, &bytes)
+            .context("Failed to write face detection model to temp file")?;
+        std::fs::rename(&tmp_path, dest)
+            .context("Failed to move face detection model to cache location")?;
+
+        tracing::info!("Face detection model cached at {:?}", dest);
+        Ok(())
     }
 
     pub fn detect_faces(&mut self, img: &DynamicImage) -> Result<Vec<Person>> {
@@ -71,15 +124,17 @@ impl FaceDetector {
         match Self::run_inference(session, img) {
             Ok(people) => Ok(people),
             Err(e) => {
-                tracing::warn!("Face detection inference failed — skipping faces for this image. Cause: {e:#}");
+                tracing::warn!(
+                    "Face detection inference failed — skipping faces for this image. \
+                     Cause: {e:#}"
+                );
                 Ok(vec![])
             }
         }
     }
 
     fn run_inference(session: &mut Session, img: &DynamicImage) -> Result<Vec<Person>> {
-        let (orig_w, orig_h) = (img.width(), img.height());
-        let input_arr = preprocess_image(img, DETECTION_SIZE, DETECTION_SIZE)?;
+        let input_arr = preprocess_image(img)?;
         let input_view = input_arr.view();
         let ort_input = TensorRef::<f32>::from_array_view(input_view)
             .context("Failed to create ORT input tensor")?;
@@ -88,36 +143,64 @@ impl FaceDetector {
             .run(ort::inputs![ort_input])
             .context("Face detection inference failed")?;
 
-        if outputs.len() == 0 {
+        if outputs.len() < 2 {
             return Ok(vec![]);
         }
 
-        // Expected output: [batch, num_detections, 6]
-        let (shape, data) = outputs[0]
+        // UltraFace output layout:
+        //   outputs[0] = scores — shape [1, N, 2]: [bkg_prob, face_prob]
+        //   outputs[1] = boxes  — shape [1, N, 4]: [x1, y1, x2, y2] in [0,1]
+        let (_, scores_data) = outputs[0]
             .try_extract_tensor::<f32>()
-            .context("Failed to extract detection output tensor")?;
+            .context("Failed to extract face-scores tensor")?;
+        let (_, boxes_data) = outputs[1]
+            .try_extract_tensor::<f32>()
+            .context("Failed to extract face-boxes tensor")?;
 
-        let detections = parse_detections(shape, data, orig_w, orig_h)?;
+        let n = scores_data.len() / 2;
+
+        // Validate that both tensors are consistent before indexing.
+        anyhow::ensure!(
+            scores_data.len() % 2 == 0,
+            "UltraFace scores tensor has unexpected length {} (expected multiple of 2)",
+            scores_data.len()
+        );
+        anyhow::ensure!(
+            boxes_data.len() == scores_data.len() * 2,
+            "UltraFace tensor size mismatch: scores.len()={} but boxes.len()={} (expected {})",
+            scores_data.len(),
+            boxes_data.len(),
+            scores_data.len() * 2
+        );
+
+        let detections = collect_detections(n, scores_data, boxes_data);
         Ok(non_maximum_suppression(detections, IOU_THRESHOLD))
     }
 }
 
-fn preprocess_image(img: &DynamicImage, w: u32, h: u32) -> Result<Array4<f32>> {
+// ---------------------------------------------------------------------------
+// Pre-processing
+
+fn preprocess_image(img: &DynamicImage) -> Result<Array4<f32>> {
     use image::imageops::FilterType;
 
-    let resized = img.resize_exact(w, h, FilterType::Lanczos3);
+    let resized = img.resize_exact(INPUT_W, INPUT_H, FilterType::Lanczos3);
     let rgb = resized.to_rgb8();
 
-    let mut arr = Array4::<f32>::zeros((1, 3, h as usize, w as usize));
+    let mut arr = Array4::<f32>::zeros((1, 3, INPUT_H as usize, INPUT_W as usize));
     for (y, row) in rgb.rows().enumerate() {
         for (x, pixel) in row.enumerate() {
-            arr[[0, 0, y, x]] = pixel[0] as f32 / 255.0;
-            arr[[0, 1, y, x]] = pixel[1] as f32 / 255.0;
-            arr[[0, 2, y, x]] = pixel[2] as f32 / 255.0;
+            // UltraFace normalisation: (pixel − 127) / 128  →  roughly [−1, 1]
+            arr[[0, 0, y, x]] = (pixel[0] as f32 - 127.0) / 128.0;
+            arr[[0, 1, y, x]] = (pixel[1] as f32 - 127.0) / 128.0;
+            arr[[0, 2, y, x]] = (pixel[2] as f32 - 127.0) / 128.0;
         }
     }
     Ok(arr)
 }
+
+// ---------------------------------------------------------------------------
+// Post-processing
 
 #[derive(Clone)]
 struct Detection {
@@ -128,48 +211,26 @@ struct Detection {
     confidence: f32,
 }
 
-fn parse_detections(
-    shape: &ort::value::Shape,
-    data: &[f32],
-    _orig_w: u32,
-    _orig_h: u32,
-) -> Result<Vec<Detection>> {
+fn collect_detections(n: usize, scores: &[f32], boxes: &[f32]) -> Vec<Detection> {
     let mut detections = Vec::new();
-
-    // shape: [batch, num_detections, 6] or [num_detections, 6]
-    if shape.len() < 2 || data.len() < 6 {
-        return Ok(detections);
-    }
-
-    let stride = 6usize;
-    let n = data.len() / stride;
-
     for i in 0..n {
-        let base = i * stride;
-        if base + 5 >= data.len() {
-            break;
-        }
-        let confidence = data[base + 4];
-        if confidence < CONFIDENCE_THRESHOLD {
+        let face_score = scores[i * 2 + 1]; // index 1 = face probability
+        if face_score < CONFIDENCE_THRESHOLD {
             continue;
         }
-        // Coordinates are in pixel space of the resized (DETECTION_SIZE x DETECTION_SIZE) image.
-    // Divide by DETECTION_SIZE to normalize to [0, 1].
-    let x1n = data[base] / DETECTION_SIZE as f32;
-        let y1n = data[base + 1] / DETECTION_SIZE as f32;
-        let x2n = data[base + 2] / DETECTION_SIZE as f32;
-        let y2n = data[base + 3] / DETECTION_SIZE as f32;
-
+        let x1 = boxes[i * 4].clamp(0.0, 1.0);
+        let y1 = boxes[i * 4 + 1].clamp(0.0, 1.0);
+        let x2 = boxes[i * 4 + 2].clamp(0.0, 1.0);
+        let y2 = boxes[i * 4 + 3].clamp(0.0, 1.0);
         detections.push(Detection {
-            x: x1n.clamp(0.0, 1.0),
-            y: y1n.clamp(0.0, 1.0),
-            w: (x2n - x1n).clamp(0.0, 1.0),
-            h: (y2n - y1n).clamp(0.0, 1.0),
-            confidence,
+            x: x1,
+            y: y1,
+            w: (x2 - x1).max(0.0),
+            h: (y2 - y1).max(0.0),
+            confidence: face_score,
         });
     }
-
-    Ok(detections)
+    detections
 }
 
 fn non_maximum_suppression(mut detections: Vec<Detection>, iou_threshold: f32) -> Vec<Person> {
@@ -219,5 +280,9 @@ fn iou(a: &Detection, b: &Detection) -> f32 {
 
     let intersection = (ix2 - ix1) * (iy2 - iy1);
     let union = a.w * a.h + b.w * b.h - intersection;
-    if union <= 0.0 { 0.0 } else { intersection / union }
+    if union <= 0.0 {
+        0.0
+    } else {
+        intersection / union
+    }
 }
