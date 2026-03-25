@@ -50,15 +50,27 @@ impl CategorizationModel {
         let api = Api::new().context("Failed to create HuggingFace API client")?;
         let repo = api.model(MODEL_ID.to_string());
 
-        let model_file = repo
-            .get("model.safetensors")
-            .context("Failed to download CLIP model weights")?;
+        // Try safetensors first; fall back to the PyTorch bin format if not available.
+        let (model_file, use_safetensors) = match repo.get("model.safetensors") {
+            Ok(path) => (path, true),
+            Err(_) => {
+                let path = repo
+                    .get("pytorch_model.bin")
+                    .context("Failed to download CLIP model weights")?;
+                (path, false)
+            }
+        };
         let tokenizer_file = repo
             .get("tokenizer.json")
             .context("Failed to download CLIP tokenizer")?;
 
-        let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[model_file], DType::F32, &device)
+        let vb = if use_safetensors {
+            unsafe {
+                VarBuilder::from_mmaped_safetensors(&[model_file], DType::F32, &device)
+                    .context("Failed to load CLIP model weights")?
+            }
+        } else {
+            VarBuilder::from_pth(model_file, DType::F32, &device)
                 .context("Failed to load CLIP model weights")?
         };
 
