@@ -63,24 +63,67 @@ impl CategorizationModel {
             }
         };
         // Build the CLIP BPE tokenizer from raw vocab/merges files.
-        // We fetch vocab.json and merges.txt directly from the CLIP repo; these
-        // are plain data files with no relative-URL references, so hf-hub can
-        // download them without hitting the "relative URL without base" error
-        // that affects tokenizer_config.json / tokenizer.json in that repo.
-        // CLIP's vocab has 49408 tokens (indices 0-49407); using GPT-2's vocab
-        // (50257 tokens) would produce token IDs that are out of range for the
-        // CLIP embedding matrix.
-        let tokenizer_repo = api.model("openai/clip-vit-base-patch32".to_string());
-        let vocab_file = tokenizer_repo
+        //
+        // The openai/clip-vit-base-patch32 repo triggers hf-hub's "relative URL
+        // without base" error for every file (including vocab.json and merges.txt),
+        // so we cannot use it as a download source at all.
+        //
+        // Instead we fetch from the gpt2 repo (which downloads cleanly) and then
+        // derive CLIP's vocabulary from it.  CLIP's BPE is a strict prefix of
+        // GPT-2's BPE:
+        //
+        //   IDs 0-255:     256 byte-level tokens  (identical in both)
+        //   IDs 256-49405: 49150 BPE merge tokens (first 49150 of GPT-2's 50000)
+        //   ID  49406:     <|startoftext|>
+        //   ID  49407:     <|endoftext|>
+        //
+        // Total: 49408 tokens — exactly CLIP's embedding table size.
+        let gpt2_repo = api.model("gpt2".to_string());
+        let gpt2_vocab_path = gpt2_repo
             .get("vocab.json")
             .context("Failed to download CLIP vocabulary")?;
-        let merges_file = tokenizer_repo
+        let gpt2_merges_path = gpt2_repo
             .get("merges.txt")
             .context("Failed to download CLIP merge rules")?;
 
+        // --- Filter vocab.json to CLIP's 49408-token vocabulary ---
+        let gpt2_vocab_bytes = std::fs::read(&gpt2_vocab_path)
+            .context("Failed to read GPT-2 vocab.json")?;
+        let mut vocab: std::collections::HashMap<String, u32> =
+            serde_json::from_slice(&gpt2_vocab_bytes)
+            .context("Failed to parse GPT-2 vocab.json")?;
+        // Keep IDs 0-49405 and replace GPT-2's special token with CLIP's two.
+        vocab.retain(|_, id| *id < 49406);
+        vocab.insert("<|startoftext|>".to_string(), 49406);
+        vocab.insert("<|endoftext|>".to_string(), 49407);
+
+        let clip_vocab_path = std::env::temp_dir().join("photo_analyzer_clip_vocab.json");
+        std::fs::write(
+            &clip_vocab_path,
+            serde_json::to_vec(&vocab).context("Failed to serialize CLIP vocab")?,
+        )
+        .context("Failed to write CLIP vocab.json")?;
+
+        // --- Trim merges.txt to CLIP's 49150 merge rules ---
+        // GPT-2 merges.txt layout: one header comment line followed by 50000 rules.
+        // CLIP needs only the first 49150 rules (256 byte tokens + 49150 merges =
+        // 49406 base tokens, then +2 special tokens = 49408 total).
+        let gpt2_merges = std::fs::read_to_string(&gpt2_merges_path)
+            .context("Failed to read GPT-2 merges.txt")?;
+        // GPT-2 merges.txt: line 0 is a header (#version: …), lines 1+ are rules.
+        // We keep the header plus the first 49150 rules → 49151 lines total.
+        let clip_merges: String = gpt2_merges
+            .lines()
+            .take(49151)
+            .flat_map(|l| [l, "\n"])
+            .collect();
+        let clip_merges_path = std::env::temp_dir().join("photo_analyzer_clip_merges.txt");
+        std::fs::write(&clip_merges_path, &clip_merges)
+            .context("Failed to write CLIP merges.txt")?;
+
         let bpe_model = BPE::from_file(
-            vocab_file.to_str().context("CLIP vocab path is not valid UTF-8")?,
-            merges_file.to_str().context("CLIP merges path is not valid UTF-8")?,
+            clip_vocab_path.to_str().context("CLIP vocab path is not valid UTF-8")?,
+            clip_merges_path.to_str().context("CLIP merges path is not valid UTF-8")?,
         )
         .unk_token("<|endoftext|>".to_string())
         .build()
@@ -88,7 +131,10 @@ impl CategorizationModel {
 
         let mut tokenizer = Tokenizer::new(bpe_model);
 
-        // Register CLIP's special tokens so the tokenizer recognises them.
+        // Register CLIP's special tokens. Since <|startoftext|> and <|endoftext|>
+        // are already present in the vocab at IDs 49406 and 49407, this call just
+        // marks them as "special" (bypassing the normal BPE segmentation) without
+        // reassigning their IDs.
         tokenizer.add_special_tokens(&[
             AddedToken::from("<|startoftext|>".to_string(), true),
             AddedToken::from("<|endoftext|>".to_string(), true),
