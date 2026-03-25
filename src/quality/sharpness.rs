@@ -1,5 +1,9 @@
 use image::DynamicImage;
 
+/// Normalization factor for Laplacian variance: maps typical sharp-image
+/// variance (~500) to a score near 1.0.
+const VARIANCE_NORMALIZATION: f32 = 500.0;
+
 pub fn compute_sharpness(img: &DynamicImage) -> f32 {
     let gray = img.to_luma8();
     let (width, height) = gray.dimensions();
@@ -32,5 +36,5 @@ pub fn compute_sharpness(img: &DynamicImage) -> f32 {
     let mean = values.iter().sum::<f32>() / values.len() as f32;
     let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / values.len() as f32;
 
-    (variance / 500.0).min(1.0)
+    (variance / VARIANCE_NORMALIZATION).min(1.0)
 }

@@ -53,9 +53,9 @@ fn main() -> Result<()> {
 
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         .with_env_filter(if args.verbose {
-            "photo_analyzer=debug,info"
+            "photo_analyzer=debug"
         } else {
-            "photo_analyzer=info,warn"
+            "photo_analyzer=info"
         })
         .finish();
     tracing::subscriber::set_global_default(subscriber)

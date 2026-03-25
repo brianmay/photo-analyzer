@@ -1,5 +1,9 @@
 use image::DynamicImage;
 
+/// Median absolute deviation threshold: a median residual of 20 intensity
+/// units (out of 255) maps to a noise score of 0 (very noisy).
+const MEDIAN_NORMALIZATION: f32 = 20.0;
+
 pub fn compute_noise(img: &DynamicImage) -> f32 {
     let gray = img.to_luma8();
     let (width, height) = gray.dimensions();
@@ -22,7 +26,7 @@ pub fn compute_noise(img: &DynamicImage) -> f32 {
     residuals.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let median = residuals[residuals.len() / 2];
 
-    let noise_level = (median / 20.0).min(1.0);
+    let noise_level = (median / MEDIAN_NORMALIZATION).min(1.0);
     1.0 - noise_level
 }
 
