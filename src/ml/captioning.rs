@@ -12,6 +12,9 @@ use image::DynamicImage;
 use tokenizers::Tokenizer;
 
 const MODEL_ID: &str = "Salesforce/blip-image-captioning-large";
+// BLIP uses the BERT tokenizer; download from bert-base-uncased to avoid
+// relative-URL issues in the BLIP repo's tokenizer_config.json.
+const TOKENIZER_MODEL_ID: &str = "bert-base-uncased";
 const IMAGE_SIZE: usize = 384;
 const SEP_TOKEN_ID: u32 = 102;
 const MAX_TOKENS: usize = 64;
@@ -34,9 +37,13 @@ impl CaptioningModel {
         let model_file = repo
             .get("model.safetensors")
             .context("Failed to download BLIP model weights")?;
-        let tokenizer_file = repo
+
+        // The BLIP tokenizer is a BERT tokenizer; fetch it from bert-base-uncased
+        // to avoid relative-URL resolution failures in the BLIP repo's tokenizer metadata.
+        let tokenizer_file = api
+            .model(TOKENIZER_MODEL_ID.to_string())
             .get("tokenizer.json")
-            .context("Failed to download BLIP tokenizer")?;
+            .context("Failed to download BERT tokenizer for BLIP")?;
 
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&[model_file], DType::F32, &device)
