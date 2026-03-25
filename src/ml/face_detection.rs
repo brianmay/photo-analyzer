@@ -1,7 +1,11 @@
 //! ONNX-based face detection using ORT with Non-Maximum Suppression.
 //!
-//! Downloads the `Xenova/face-detection` ONNX model from HuggingFace on first
-//! use. Expected output format: [batch, num_detections, 6] where the last
+//! Downloads the `deepghs/face_detect_onnx` ONNX model from HuggingFace on
+//! first use. If the model cannot be downloaded or loaded, face detection is
+//! disabled gracefully — the rest of the pipeline (captioning, categorisation)
+//! continues to work normally.
+//!
+//! Expected output format: [batch, num_detections, 6] where the last
 //! dimension is [x1, y1, x2, y2, confidence, class_id].
 
 use anyhow::{Context, Result};
@@ -12,22 +16,42 @@ use ort::{session::Session, value::TensorRef};
 
 use crate::models::{BoundingBox, Person};
 
-const MODEL_ID: &str = "Xenova/face-detection";
+const MODEL_ID: &str = "deepghs/face_detect_onnx";
+const MODEL_FILE: &str = "face_detect.onnx";
 const DETECTION_SIZE: u32 = 640;
 const CONFIDENCE_THRESHOLD: f32 = 0.5;
 const IOU_THRESHOLD: f32 = 0.4;
 
 pub struct FaceDetector {
-    session: Session,
+    session: Option<Session>,
 }
 
 impl FaceDetector {
+    /// Attempt to download and initialise the face-detection model.
+    ///
+    /// If the model is unavailable (network error, authentication required,
+    /// etc.) a warning is logged and the detector is returned in a disabled
+    /// state.  All subsequent calls to [`detect_faces`] will return an empty
+    /// list in that case.
     pub fn load() -> Result<Self> {
+        match Self::try_load() {
+            Ok(session) => Ok(Self { session: Some(session) }),
+            Err(e) => {
+                tracing::warn!(
+                    "Face detection model could not be loaded — face detection \
+                     is disabled for this session. Cause: {e:#}"
+                );
+                Ok(Self { session: None })
+            }
+        }
+    }
+
+    fn try_load() -> Result<Session> {
         let api = Api::new().context("Failed to create HuggingFace API client")?;
         let repo = api.model(MODEL_ID.to_string());
 
         let model_path = repo
-            .get("onnx/model.onnx")
+            .get(MODEL_FILE)
             .context("Failed to download face detection ONNX model")?;
 
         let session = Session::builder()
@@ -35,18 +59,22 @@ impl FaceDetector {
             .commit_from_file(model_path)
             .context("Failed to load ONNX face detection model")?;
 
-        Ok(Self { session })
+        Ok(session)
     }
 
     pub fn detect_faces(&mut self, img: &DynamicImage) -> Result<Vec<Person>> {
+        let session = match &mut self.session {
+            Some(s) => s,
+            None => return Ok(vec![]),
+        };
+
         let (orig_w, orig_h) = (img.width(), img.height());
         let input_arr = preprocess_image(img, DETECTION_SIZE, DETECTION_SIZE)?;
         let input_view = input_arr.view();
         let ort_input = TensorRef::<f32>::from_array_view(input_view)
             .context("Failed to create ORT input tensor")?;
 
-        let outputs = self
-            .session
+        let outputs = session
             .run(ort::inputs![ort_input])
             .context("Face detection inference failed")?;
 

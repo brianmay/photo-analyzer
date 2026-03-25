@@ -27,7 +27,7 @@ impl MlModels {
         tracing::info!("Categorization model loaded");
 
         let face_detector = FaceDetector::load()?;
-        tracing::info!("Face detection model loaded");
+        tracing::info!("Face detection model loaded (disabled if model was unavailable)");
 
         Ok(Self {
             captioning,
