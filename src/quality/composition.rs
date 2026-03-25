@@ -55,7 +55,7 @@ pub fn compute_composition(faces: &[BoundingBox]) -> f32 {
 
         if face.y < TOP_CROP_THRESHOLD {
             score -= TOP_CROP_PENALTY;
-        } else if face.y > GOOD_PLACEMENT_Y_MIN && face.y < GOOD_PLACEMENT_Y_MAX {
+        } else if cy > GOOD_PLACEMENT_Y_MIN && cy < GOOD_PLACEMENT_Y_MAX {
             score += GOOD_PLACEMENT_BONUS;
         }
 

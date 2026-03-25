@@ -93,8 +93,8 @@ struct Detection {
 fn parse_detections(
     shape: &ort::value::Shape,
     data: &[f32],
-    orig_w: u32,
-    orig_h: u32,
+    _orig_w: u32,
+    _orig_h: u32,
 ) -> Result<Vec<Detection>> {
     let mut detections = Vec::new();
 
@@ -116,11 +116,11 @@ fn parse_detections(
             continue;
         }
         // Coordinates are in pixel space of the resized (DETECTION_SIZE x DETECTION_SIZE) image.
-        // Normalize to [0, 1] relative to the original image dimensions.
-        let x1n = data[base] / orig_w as f32;
-        let y1n = data[base + 1] / orig_h as f32;
-        let x2n = data[base + 2] / orig_w as f32;
-        let y2n = data[base + 3] / orig_h as f32;
+        // Divide by DETECTION_SIZE to normalize to [0, 1].
+        let x1n = data[base] / DETECTION_SIZE as f32;
+        let y1n = data[base + 1] / DETECTION_SIZE as f32;
+        let x2n = data[base + 2] / DETECTION_SIZE as f32;
+        let y2n = data[base + 3] / DETECTION_SIZE as f32;
 
         detections.push(Detection {
             x: x1n.clamp(0.0, 1.0),

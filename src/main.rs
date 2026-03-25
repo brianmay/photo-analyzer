@@ -92,7 +92,8 @@ fn main() -> Result<()> {
 
     if args.skip_existing && !args.force {
         all_photos.retain(|p| {
-            let json_path = p.with_extension("analysis.json");
+            let stem = p.file_stem().map(|s| s.to_string_lossy()).unwrap_or_default();
+            let json_path = p.with_file_name(format!("{stem}.analysis.json"));
             !json_path.exists()
         });
         info!("{} photos remaining after filtering existing", all_photos.len());
