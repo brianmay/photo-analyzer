@@ -1,7 +1,7 @@
 //! BLIP-based image captioning using candle-transformers.
 //!
-//! Downloads `Salesforce/blip-image-captioning-base` from HuggingFace on first
-//! use and generates captions via greedy decoding.
+//! Downloads `Salesforce/blip-image-captioning-large` from HuggingFace on first
+//! use and generates captions via greedy decoding with KV-cache.
 
 use anyhow::{Context, Result};
 use candle_core::{DType, Device, IndexOp, Module, Tensor};
@@ -61,6 +61,9 @@ impl CaptioningModel {
     }
 
     pub fn caption(&mut self, img: &DynamicImage) -> Result<(String, String)> {
+        // Reset the KV cache so that previous images don't pollute this run.
+        self.model.reset_kv_cache();
+
         let pixel_values = preprocess_image(img, &self.device)?;
         let image_embeds = self
             .model
@@ -68,12 +71,21 @@ impl CaptioningModel {
             .forward(&pixel_values)
             .map_err(|e| anyhow::anyhow!("Vision forward failed: {e}"))?;
 
-        // Greedy decoding — start with CLS token (id=101).
-        let mut token_ids: Vec<u32> = vec![101];
+        // Greedy decoding with incremental (token-by-token) KV-cache feeding.
+        //
+        // The BLIP text decoder maintains a KV cache and tracks `past_kv_len`
+        // for positional embeddings.  On every call only the *latest* token is
+        // fed; the model appends its key/value pair to the cache and attends to
+        // all previous positions through it.  Feeding the full accumulated
+        // sequence instead would make the actual KV length (cache + new tokens)
+        // diverge from the causal-mask size, causing a shape mismatch.
+        let mut token_ids: Vec<u32> = vec![101]; // start with CLS (id=101)
         let mut generated = String::new();
 
         for _ in 0..MAX_TOKENS {
-            let input = Tensor::new(token_ids.as_slice(), &self.device)
+            // Pass only the most recently added token.
+            let last_id = *token_ids.last().unwrap();
+            let input = Tensor::new(&[last_id], &self.device)
                 .and_then(|t| t.unsqueeze(0))
                 .map_err(|e| anyhow::anyhow!("Tensor error: {e}"))?;
 
@@ -83,9 +95,9 @@ impl CaptioningModel {
                 .forward(&input, &image_embeds)
                 .map_err(|e| anyhow::anyhow!("Text decoder error: {e}"))?;
 
-            // Logits for the last generated position.
+            // logits shape: [1, 1, vocab_size] — take the single position.
             let last_logits = logits
-                .i((0, token_ids.len() - 1, ..))
+                .i((0, 0, ..))
                 .map_err(|e| anyhow::anyhow!("Logit indexing error: {e}"))?;
             let next_token = last_logits
                 .argmax(0)
