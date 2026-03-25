@@ -128,7 +128,7 @@ fn main() -> Result<()> {
             }
             Err(e) => {
                 ec.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                error!("Failed to analyze {}: {}", photo_path.display(), e);
+                error!("Failed to analyze {}: {:#}", photo_path.display(), e);
             }
         }
     });

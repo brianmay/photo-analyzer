@@ -2,7 +2,7 @@ pub mod captioning;
 pub mod categorization;
 pub mod face_detection;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use image::DynamicImage;
 
 use crate::models::{Category, Person};
@@ -41,8 +41,14 @@ impl MlModels {
         img: &DynamicImage,
         category_threshold: f32,
     ) -> Result<(String, String, Vec<Category>, Vec<Person>)> {
-        let (title, description) = self.captioning.caption(img)?;
-        let categories = self.categorization.categorize(img, category_threshold)?;
+        let (title, description) = self
+            .captioning
+            .caption(img)
+            .context("Image captioning failed")?;
+        let categories = self
+            .categorization
+            .categorize(img, category_threshold)
+            .context("Image categorization failed")?;
         let people = self.face_detector.detect_faces(img)?;
 
         Ok((title, description, categories, people))

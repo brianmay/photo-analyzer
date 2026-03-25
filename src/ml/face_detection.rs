@@ -68,6 +68,16 @@ impl FaceDetector {
             None => return Ok(vec![]),
         };
 
+        match Self::run_inference(session, img) {
+            Ok(people) => Ok(people),
+            Err(e) => {
+                tracing::warn!("Face detection inference failed — skipping faces for this image. Cause: {e:#}");
+                Ok(vec![])
+            }
+        }
+    }
+
+    fn run_inference(session: &mut Session, img: &DynamicImage) -> Result<Vec<Person>> {
         let (orig_w, orig_h) = (img.width(), img.height());
         let input_arr = preprocess_image(img, DETECTION_SIZE, DETECTION_SIZE)?;
         let input_view = input_arr.view();
