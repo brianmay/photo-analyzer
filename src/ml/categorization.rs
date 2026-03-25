@@ -63,11 +63,14 @@ impl CategorizationModel {
             }
         };
         // Build the CLIP BPE tokenizer from raw vocab/merges files.
-        // The openai/clip-vit-base-patch32 repo triggers hf-hub's "relative URL
-        // without base" error for every file, so we fetch the BPE data from the
-        // gpt2 repo instead.  CLIP uses the identical BPE vocabulary as GPT-2;
-        // the only difference is the CLIP-specific special tokens added below.
-        let tokenizer_repo = api.model("gpt2".to_string());
+        // We fetch vocab.json and merges.txt directly from the CLIP repo; these
+        // are plain data files with no relative-URL references, so hf-hub can
+        // download them without hitting the "relative URL without base" error
+        // that affects tokenizer_config.json / tokenizer.json in that repo.
+        // CLIP's vocab has 49408 tokens (indices 0-49407); using GPT-2's vocab
+        // (50257 tokens) would produce token IDs that are out of range for the
+        // CLIP embedding matrix.
+        let tokenizer_repo = api.model("openai/clip-vit-base-patch32".to_string());
         let vocab_file = tokenizer_repo
             .get("vocab.json")
             .context("Failed to download CLIP vocabulary")?;
